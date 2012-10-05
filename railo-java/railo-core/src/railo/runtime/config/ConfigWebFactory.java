@@ -1,6 +1,24 @@
 package railo.runtime.config;
 
-import com.jacob.com.LibraryLoader;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.TimeZone;
+
+import javax.servlet.ServletConfig;
+
 import org.apache.xerces.parsers.DOMParser;
 import org.jfree.chart.block.LabelBlockImpl;
 import org.safehaus.uuid.UUIDGenerator;
@@ -11,6 +29,7 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
+
 import railo.aprint;
 import railo.commons.collections.HashTable;
 import railo.commons.date.TimeZoneUtil;
@@ -28,11 +47,21 @@ import railo.commons.io.res.type.s3.S3ResourceProvider;
 import railo.commons.io.res.util.ResourceClassLoader;
 import railo.commons.io.res.util.ResourceClassLoaderFactory;
 import railo.commons.io.res.util.ResourceUtil;
-import railo.commons.lang.*;
+import railo.commons.lang.ByteSizeParser;
+import railo.commons.lang.ClassException;
+import railo.commons.lang.ClassLoaderHelper;
+import railo.commons.lang.ClassUtil;
+import railo.commons.lang.Md5;
+import railo.commons.lang.StringUtil;
+import railo.commons.lang.SystemOut;
 import railo.commons.net.URLDecoder;
 import railo.loader.TP;
 import railo.loader.engine.CFMLEngineFactory;
-import railo.runtime.*;
+import railo.runtime.CFMLFactoryImpl;
+import railo.runtime.Component;
+import railo.runtime.Info;
+import railo.runtime.Mapping;
+import railo.runtime.MappingImpl;
 import railo.runtime.cache.CacheConnection;
 import railo.runtime.cache.CacheConnectionImpl;
 import railo.runtime.cache.ServerCacheConnection;
@@ -46,8 +75,18 @@ import railo.runtime.config.component.ComponentFactory;
 import railo.runtime.crypt.BlowfishEasy;
 import railo.runtime.db.DataSource;
 import railo.runtime.db.DataSourceImpl;
-import railo.runtime.dump.*;
-import railo.runtime.engine.*;
+import railo.runtime.dump.ClassicHTMLDumpWriter;
+import railo.runtime.dump.DumpWriter;
+import railo.runtime.dump.DumpWriterEntry;
+import railo.runtime.dump.HTMLDumpWriter;
+import railo.runtime.dump.SimpleHTMLDumpWriter;
+import railo.runtime.dump.TextDumpWriter;
+import railo.runtime.engine.CFMLEngineImpl;
+import railo.runtime.engine.ConsoleExecutionLog;
+import railo.runtime.engine.ExecutionLog;
+import railo.runtime.engine.ExecutionLogFactory;
+import railo.runtime.engine.ThreadLocalConfig;
+import railo.runtime.engine.ThreadQueueImpl;
 import railo.runtime.exp.ApplicationException;
 import railo.runtime.exp.ExpressionException;
 import railo.runtime.exp.PageException;
@@ -59,7 +98,12 @@ import railo.runtime.extension.ExtensionProviderImpl;
 import railo.runtime.gateway.GatewayEngineImpl;
 import railo.runtime.gateway.GatewayEntry;
 import railo.runtime.gateway.GatewayEntryImpl;
-import railo.runtime.listener.*;
+import railo.runtime.listener.AppListenerUtil;
+import railo.runtime.listener.ApplicationListener;
+import railo.runtime.listener.ClassicAppListener;
+import railo.runtime.listener.MixedAppListener;
+import railo.runtime.listener.ModernAppListener;
+import railo.runtime.listener.NoneAppListener;
 import railo.runtime.monitor.IntervallMonitor;
 import railo.runtime.monitor.IntervallMonitorWrap;
 import railo.runtime.monitor.RequestMonitor;
@@ -94,13 +138,7 @@ import railo.transformer.library.function.FunctionLibException;
 import railo.transformer.library.tag.TagLib;
 import railo.transformer.library.tag.TagLibException;
 
-import javax.servlet.ServletConfig;
-import java.io.*;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.*;
-import java.util.Map.Entry;
+import com.jacob.com.LibraryLoader;
 
 /**
  * 
@@ -2556,8 +2594,7 @@ public final class ConfigWebFactory {
 	  	  if(tld!=null) config.setTldFile(tld);
 	  	}
 	  	
-//	  	// Tag Directory
-		// MZ: Todo: zomg
+	  	// Tag Directory
 	  	if(strTagDirectory!=null) {
 	  		Resource dir=ConfigWebUtil.getFile(config,configDir,strTagDirectory,FileUtil.TYPE_DIR);
 	  		createTagFiles(config,configDir,dir,doNew);
@@ -2565,7 +2602,7 @@ public final class ConfigWebFactory {
 	  			config.setTagDirectory(dir);
 	  		}
 	  	}
-
+	  	
         // allow realpath
 	  	if(hasCS) {
 	  		config.setAllowRealPath(configServer.allowRealPath());
@@ -2588,13 +2625,12 @@ public final class ConfigWebFactory {
 	  	
 
 	  	// Function Directory
-//		// MZ: Zomg
 	  	if(strFunctionDirectory!=null) {
 	  		Resource dir=ConfigWebUtil.getFile(config,configDir,strFunctionDirectory,FileUtil.TYPE_DIR);
 	  		createFunctionFiles(config,configDir,dir,doNew);
 	  	  if(dir!=null) config.setFunctionDirectory(dir);
 	  	}
-
+	  	
 	  	
 	  	/* / Function Dir
 	  	if(strFunctionDirectory!=null) {
